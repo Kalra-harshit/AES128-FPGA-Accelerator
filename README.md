@@ -23,8 +23,9 @@ This repository is currently in active development. The foundational logic has b
 * [ ] **UART Interface:** Developing a custom Finite State Machine (FSM) to handle serial data transmission between the FPGA and a host PC.
 * [ ] **MATLAB GUI Dashboard:** Building an interactive software front-end to load `.bmp`/`.png` images, send them to the FPGA, and display the hardware-encrypted results in real-time.
 
-      Final Flowchart
-      ![WhatsApp Image 2026-02-18 at 11 23 27 PM](https://github.com/user-attachments/assets/c70c0865-c00e-416e-8fc4-bd6407e429c4)
+    
+     Final Flowchart
+     ![Flowchart](https://github.com/user-attachments/assets/c70c0865-c00e-416e-8fc4-bd6407e429c4)
 
 
 ## 📂 Repository Structure
