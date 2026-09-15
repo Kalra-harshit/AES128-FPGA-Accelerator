@@ -1,0 +1,66 @@
+import serial
+from PIL import Image
+
+# --- CONFIGURATION ---
+PORT = 'COM3'         # Check Device Manager for your Boolean board COM port
+BAUD = 115200
+BYTES_TO_PROCESS = 64
+IMAGE_PATH = 'my_test_image.jpg' # Put any image file in the same folder as this script
+
+def print_matrix(title, data_array):
+    """Helper function to print a 1D byte array as a clean 8x8 Hex grid."""
+    print(f"\n--- {title} ---")
+    for i in range(0, len(data_array), 8):
+        row = data_array[i:i+8]
+        print(" ".join(f"{byte:02x}" for byte in row))
+
+try:
+    # 1. PROCESS THE INPUT IMAGE
+    print(f"Opening {IMAGE_PATH}...")
+    # Open image, convert to Grayscale ('L'), and force it to 8x8 pixels
+    img = Image.open(IMAGE_PATH).convert('L').resize((8, 8))
+    
+    # Save and display the original 8x8 image
+    original_filename = 'original_8x8.png'
+    img.save(original_filename)
+    img.show() # Pops open the original image viewer window
+    
+    # Extract the 64 pixel values into a list of integers (0-255)
+    original_pixels = list(img.getdata())
+    print_matrix("Original 8x8 Image Matrix (Hex)", original_pixels)
+    
+    # Convert list of ints to a raw byte array for transmission
+    data_to_send = bytearray(original_pixels)
+
+    # 2. UART TRANSMISSION
+    print(f"\nOpening {PORT} at {BAUD} baud...")
+    with serial.Serial(PORT, BAUD, timeout=5) as ser:
+        print("Sending original image pixels to the FPGA...")
+        ser.write(data_to_send)
+        
+        print("Waiting for hardware encryption response...")
+        encrypted_data = ser.read(BYTES_TO_PROCESS)
+        
+    # 3. PROCESS THE OUTPUT
+    if len(encrypted_data) == BYTES_TO_PROCESS:
+        print_matrix("Encrypted Matrix Received From FPGA", encrypted_data)
+        
+        # Create a blank 8x8 grayscale image
+        enc_img = Image.new('L', (8, 8))
+        enc_img.putdata(list(encrypted_data))
+        
+        output_filename = 'encrypted_output.png'
+        enc_img.save(output_filename)
+        
+        print(f"\nSuccess! Images saved as '{original_filename}' and '{output_filename}'.")
+        
+        # Pops open the encrypted image viewer window
+        enc_img.show() 
+        
+    else:
+        print(f"\nTimeout! Expected {BYTES_TO_PROCESS} bytes, but caught {len(encrypted_data)}.")
+
+except FileNotFoundError:
+    print(f"Error: Could not find '{IMAGE_PATH}'. Make sure the image is in the same folder.")
+except serial.SerialException as e:
+    print(f"Error opening port: {e}")
