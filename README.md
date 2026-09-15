@@ -17,11 +17,11 @@ This repository is currently in active development. The foundational logic has b
 
 
 
-## 🚀 Roadmap (Upcoming Features)
+## 🚀 Roadmap 
 * [x] **Python Golden Model:** Integrated a mathematical reference model for generating expected test vectors.
-* [ ] **Pipelined Architecture:** Upgrading the core to a 10-stage hardware pipeline by inserting registers between rounds to maximize maximum clock frequency (Fmax) and achieve a throughput of 1 block per clock cycle.
-* [ ] **UART Interface:** Developing a custom Finite State Machine (FSM) to handle serial data transmission between the FPGA and a host PC.
-* [ ] **MATLAB GUI Dashboard:** Building an interactive software front-end to load `.bmp`/`.png` images, send them to the FPGA, and display the hardware-encrypted results in real-time.
+* [x] **Pipelined Architecture:** Upgrading the core to a 11-stage hardware pipeline by inserting registers between rounds to maximize maximum clock frequency (Fmax) and achieve a throughput of 1 block per clock cycle.
+* [x] **UART Interface:** Developing a custom Finite State Machine (FSM) to handle serial data transmission between the FPGA and a host PC.
+* [x] **PYTHON GUI Dashboard:** Building an interactive software front-end to load `.bmp`/`.png` images, send them to the FPGA, and display the hardware-encrypted results in real-time.
 
     
      Final Flowchart
