@@ -1,100 +1,154 @@
 `timescale 1ns / 1ps
 
-module aes_controller(
+module aes_controller #(
+    parameter TOTAL_BLOCKS = 4 // Kept at 4 for fast simulation!
+)(
     input wire clk,
     input wire reset, 
 
-    // --- STREAMING INPUT (From Testbench/UART) ---
-    input wire [7:0] rx_data,     // 8-bit byte arriving
-    input wire       rx_valid,    // Signal that data is valid
-    output reg       rx_ready,    // "I am ready to receive more data"
+    // --- UART RX HANDSHAKE ---
+    input wire [7:0] rx_data,     
+    input wire       rx_valid,    
+    output reg       rx_ready,    
 
-    // --- AES HANDSHAKE (To AES Core) ---
-    output reg [127:0] aes_state_in, // Renamed from 'aes_in' to match Top Module
-    output reg [127:0] aes_key,      // The Key
-    output reg         aes_start,    // "Start Encryption" signal
-    input wire [127:0] aes_out,      // Result from Core
+    // --- UART TX HANDSHAKE ---
+    output reg [7:0] tx_data,     // CHANGED: Now 8-bit
+    output reg       tx_valid,    
+    input  wire      tx_busy,     // NEW: Tells us if UART is busy
 
-    // --- STREAMING OUTPUT (Result) ---
-    output reg [127:0] tx_data,      // The encrypted result
-    output reg         tx_valid      // "Result is ready"
-    );
+    // --- AES CORE HANDSHAKE ---
+    output reg [127:0] aes_state_in, 
+    output reg [127:0] aes_key,      
+    output reg         aes_start,    
+    input wire [127:0] aes_out,      
+    input wire         aes_valid_out
+);
 
-    // --- INTERNAL STORAGE ---
-    reg [127:0] buffer;      // Accumulates the 16 bytes
-    reg [3:0]   byte_count;  // Counter 0 to 15
-    reg [4:0]   wait_timer;  // Timer to wait for AES Core
+     reg [127:0] input_bram  [0:TOTAL_BLOCKS-1];
+     reg [127:0] output_bram [0:TOTAL_BLOCKS-1];
 
-    // --- STATE MACHINE ---
-    localparam STATE_IDLE      = 2'b00;
-    localparam STATE_COLLECT   = 2'b01; 
-    localparam STATE_CALCULATE = 2'b10; 
-    localparam STATE_DONE      = 2'b11; 
-
+    localparam STATE_LOAD    = 2'b00;
+    localparam STATE_ENCRYPT = 2'b01;
+    localparam STATE_SEND    = 2'b10;
+    
     reg [1:0] state;
-    
-    // Hardcoded Key (Can be changed later)
-    always @(*) aes_key = 128'h2b7e151628aed2a6abf7158809cf4f3c;
-    
+
+    reg [127:0] buffer;
+    reg [3:0]   byte_count;
+
+    // Address trackers
+    reg [2:0] load_addr;          
+    reg [2:0] encrypt_read_addr;  
+    reg [2:0] encrypt_write_addr; 
+    reg [2:0] send_addr;          
+
+    // NEW: Variables for the Serializer in STATE_SEND
+    reg [127:0] tx_shift_reg;
+    reg [4:0]   tx_byte_count;
+    reg         tx_active;
+
     always @(posedge clk) begin
         if (reset) begin
-            state        <= STATE_IDLE;
-            byte_count   <= 0;
-            buffer       <= 0;
-            rx_ready     <= 0;
-            aes_start    <= 0;
-            tx_valid     <= 0;
-            tx_data      <= 0;
-            wait_timer   <= 0;
-            aes_state_in <= 0;
-            aes_key      <= 128'h2b7e151628aed2a6abf7158809cf4f3c;
-        end else begin
-            case (state)
+            state              <= STATE_LOAD;
+            byte_count         <= 0;
+            load_addr          <= 0;
+            encrypt_read_addr  <= 0;
+            encrypt_write_addr <= 0;
+            send_addr          <= 0;
             
-                // 1. IDLE: Reset everything and get ready
-                STATE_IDLE: begin
-                    byte_count <= 0;
-                    tx_valid   <= 0;
-                    rx_ready   <= 1; 
-                    state      <= STATE_COLLECT;
-                end
-                
-                // 2. COLLECT: Gather 16 bytes into the 128-bit buffer
-                STATE_COLLECT: begin
-                    if (rx_valid) begin
+            tx_shift_reg  <= 0;
+            tx_byte_count <= 0;
+            tx_active     <= 0;
+
+            buffer        <= 0;
+            aes_start     <= 0;
+            tx_valid      <= 0;
+            rx_ready      <= 1; 
+            aes_key       <= 128'h2b7e151628aed2a6abf7158809cf4f3c;
+        end else begin
+            
+            aes_start <= 0;
+            tx_valid  <= 0; // Default off, will pulse when ready
+
+            case (state)
+                // --- PHASE 1: LOAD ---
+                STATE_LOAD: begin
+                    if (rx_valid && rx_ready) begin
                         buffer <= {buffer[119:0], rx_data};                      
                         if (byte_count == 15) begin
-                            rx_ready <= 0; 
-                            state    <= STATE_CALCULATE;
+                            byte_count <= 0;
+                            input_bram[load_addr] <= {buffer[119:0], rx_data};
+                            
+                            if (load_addr == TOTAL_BLOCKS - 1) begin
+                                state <= STATE_ENCRYPT; 
+                                rx_ready <= 0; 
+                            end else begin
+                                load_addr <= load_addr + 1;
+                            end
                         end else begin
                             byte_count <= byte_count + 1;
                         end
                     end
                 end
-                
-                // 3. CALCULATE: Send to AES Core and wait
-                STATE_CALCULATE: begin
-                    aes_state_in <= buffer; 
-                    aes_start    <= 1;                      
-                    // Wait for 20 clock cycles for AES to finish
-                    if (wait_timer == 20) begin
-                        aes_start  <= 0;
-                        wait_timer <= 0;
-                        tx_data    <= aes_out; 
-                        state      <= STATE_DONE;
-                    end else begin
-                        wait_timer <= wait_timer + 1;
+
+                // --- PHASE 2: ENCRYPT ---
+                STATE_ENCRYPT: begin
+                    if (encrypt_read_addr < TOTAL_BLOCKS) begin
+                        aes_state_in <= input_bram[encrypt_read_addr]; 
+                        aes_start    <= 1; 
+                        encrypt_read_addr <= encrypt_read_addr + 1;
+                    end
+                    
+                    if (aes_valid_out) begin
+                        output_bram[encrypt_write_addr] <= aes_out;
+                        if (encrypt_write_addr == TOTAL_BLOCKS - 1) begin
+                            state <= STATE_SEND; 
+                        end else begin
+                            encrypt_write_addr <= encrypt_write_addr + 1;
+                        end
                     end
                 end
-                
-                // 4. DONE: Output the result flag
-                STATE_DONE: begin
-                    tx_valid <= 1;
-                    state    <= STATE_IDLE; 
+
+                // --- PHASE 3: SEND (Serializer) ---
+                STATE_SEND: begin
+                    if (send_addr < TOTAL_BLOCKS) begin
+                        
+                        // 1. Fetch a new 128-bit block from BRAM
+                        if (tx_byte_count == 0 && !tx_active) begin
+                            tx_shift_reg  <= output_bram[send_addr];
+                            tx_byte_count <= 16;
+                            tx_active     <= 1;
+                        
+                        // 2. Transmit the 16 bytes sequentially
+                        end else if (tx_byte_count > 0) begin
+                            // If UART is ready to accept a new byte
+                            if (!tx_busy && !tx_valid) begin
+                                tx_data  <= tx_shift_reg[127:120]; // Grab the top byte
+                                tx_valid <= 1;                     // Pulse valid
+                            // After pulsing valid, shift the register left by 8 bits
+                            end else if (tx_valid) begin
+                                tx_shift_reg  <= {tx_shift_reg[119:0], 8'h00};
+                                tx_byte_count <= tx_byte_count - 1;
+                            end
+                        
+                        // 3. Block is finished, move to next address
+                        end else begin
+                            tx_active <= 0;
+                            send_addr <= send_addr + 1;
+                        end
+                        
+                    end else begin
+                        // Done sending all blocks! Reset FSM.
+                        state <= STATE_LOAD;
+                        load_addr <= 0;
+                        encrypt_read_addr <= 0;
+                        encrypt_write_addr <= 0;
+                        send_addr <= 0;
+                        rx_ready <= 1;
+                    end
                 end
                 
             endcase
         end
     end
-
 endmodule
